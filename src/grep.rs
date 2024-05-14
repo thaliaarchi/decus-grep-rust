@@ -79,7 +79,7 @@ const ALPHA: u8 = 10;
 const DIGIT: u8 = 11;
 /// `:n` or `:N`, i.e., `[A-Za-z0-9]`
 const NALPHA: u8 = 12;
-/// `: `, i.e., `[␁- ]` (where ␁ is a literal U+0001)
+/// `: `, i.e., `[␁- ]` (where ␁ is a literal 0x01 byte)
 const PUNCT: u8 = 13;
 /// `[x-y]`
 const RANGE: u8 = 14;
