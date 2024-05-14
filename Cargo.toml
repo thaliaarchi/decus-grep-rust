@@ -1,8 +1,12 @@
 [package]
 name = "decus-grep-rust"
 version = "0.1.0"
+authors = ["Thalia Archibald <thalia@archibald.dev>"]
 edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+description = "A port of the historical DECUS grep.c to Rust"
+repository = "https://github.com/thaliaarchi/decus-grep-rust"
+license = "MPL-2.0"
+keywords = ["grep", "regexp", "history"]
+categories = ["text-processing"]
 
 [dependencies]
