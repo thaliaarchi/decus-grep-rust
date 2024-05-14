@@ -48,9 +48,11 @@ The concatenation of regular expressions is a regular expression."#;
 const PMAX: usize = 256;
 
 #[derive(Clone, Debug)]
-pub struct Compiler {
-    debug: u32,
+struct Compiler<'s> {
+    source: &'s [u8],
+    offset: usize,
     pbuf: Vec<u8>,
+    debug: u32,
 }
 
 /// Literal character (case-insensitive)
@@ -96,35 +98,38 @@ pub enum ErrorKind {
     Other,
 }
 
-impl Compiler {
-    pub fn new(debug: u32) -> Self {
+pub fn compile(source: &[u8], debug: u32) -> Result<Vec<u8>, Error> {
+    let mut compiler = Compiler::new(source, debug);
+    compiler.compile().map(|()| compiler.pbuf)
+}
+
+impl<'s> Compiler<'s> {
+    fn new(source: &'s [u8], debug: u32) -> Self {
         Compiler {
-            debug,
+            source,
+            offset: 0,
             pbuf: Vec::with_capacity(PMAX),
+            debug,
         }
     }
 
-    pub fn compile(&mut self, source: &[u8]) -> Result<(), Error> {
+    fn compile(&mut self) -> Result<(), Error> {
         if self.debug != 0 {
             let mut stdout = stdout().lock();
             stdout.write_all(b"Pattern = \"").unwrap();
-            stdout.write_all(source).unwrap();
+            stdout.write_all(self.source).unwrap();
             stdout.write_all(b"\"\n").unwrap();
         }
 
         let mut pat_start = 0;
-        let mut i = 0;
-        while i < source.len() {
-            let c = source[i];
-            i += 1;
-
+        while let Some(c) = self.bump() {
             // STAR, PLUS, and MINUS are special.
             if c == b'*' || c == b'+' || c == b'-' {
                 if matches!(
                     self.pbuf.last(),
                     None | Some(&(BOL | EOL | STAR | PLUS | MINUS))
                 ) {
-                    return Err(badpat("Illegal occurrance op.", source, i));
+                    return Err(self.badpat("Illegal occurrance op."));
                 }
                 let pat_end = self.pbuf.len();
                 self.store(ENDPAT)?; // Placeholder
@@ -147,25 +152,24 @@ impl Compiler {
                 b'^' => self.store(BOL)?,
                 b'$' => self.store(EOL)?,
                 b'.' => self.store(ANY)?,
-                b'[' => i = self.cclass(source, i)?,
+                b'[' => self.cclass()?,
                 b':' => {
-                    if i >= source.len() {
-                        return Err(badpat("No : type", source, i));
-                    }
-                    let c = source[i];
-                    i += 1;
+                    let Some(c) = self.bump() else {
+                        return Err(self.badpat("No : type"));
+                    };
                     match c {
                         b'a' | b'A' => self.store(ALPHA)?,
                         b'd' | b'D' => self.store(DIGIT)?,
                         b'n' | b'N' => self.store(NALPHA)?,
                         b' ' => self.store(PUNCT)?,
-                        _ => return Err(badpat("Unknown : type", source, i)),
+                        _ => return Err(self.badpat("Unknown : type")),
                     }
                 }
                 mut c => {
-                    if c == b'\\' && i < source.len() {
-                        c = source[i];
-                        i += 1;
+                    if c == b'\\' {
+                        if let Some(c2) = self.bump() {
+                            c = c2;
+                        }
                     }
                     self.store(CHAR)?;
                     self.store(c.to_ascii_lowercase())?;
@@ -191,45 +195,41 @@ impl Compiler {
         Ok(())
     }
 
-    fn cclass(&mut self, source: &[u8], mut i: usize) -> Result<usize, Error> {
-        self.store(if source.get(i) == Some(&b'^') {
-            i += 1;
+    fn cclass(&mut self) -> Result<(), Error> {
+        let class = if self.peek() == Some(b'^') {
+            self.bump();
             NCLASS
         } else {
             CLASS
-        })?;
+        };
+        self.store(class)?;
         let class_start = self.pbuf.len();
         self.store(0)?; // Byte count
 
         loop {
-            if i >= source.len() {
-                return Err(badpat("Unterminated class", source, i));
-            }
-            let c = source[i];
-            i += 1;
+            let Some(c) = self.bump() else {
+                return Err(self.badpat("Unterminated class"));
+            };
             if c == b']' {
                 break;
             }
             if c == b'\\' {
                 // Store an escaped char.
-                if i >= source.len() {
-                    return Err(badpat("Class terminates badly", source, i));
-                }
-                self.store(source[i].to_ascii_lowercase())?;
-                i += 1;
+                let Some(c) = self.bump() else {
+                    return Err(self.badpat("Class terminates badly"));
+                };
+                self.store(c.to_ascii_lowercase())?;
             } else if c == b'-'
                 && (self.pbuf.len() - class_start) > 1
-                && i < source.len()
-                && source[i] != b']'
+                && self.peek().is_some_and(|c| c != b']')
             {
                 // Store a char range.
                 // BUG: Parses incorrectly when a range is followed by a dash.
                 let low = self.pbuf.pop().unwrap();
                 self.store(RANGE)?;
                 self.store(low)?;
-                let high = source[i];
+                let high = self.bump().unwrap();
                 self.store(high.to_ascii_lowercase())?;
-                i += 1;
             } else {
                 // Store a literal char.
                 // BUG: U+000E cannot be stored literally, because it will be
@@ -240,12 +240,12 @@ impl Compiler {
 
         let len = self.pbuf.len() - class_start;
         if len >= 256 {
-            return Err(badpat("Class too large", source, i));
+            return Err(self.badpat("Class too large"));
         } else if len == 0 {
-            return Err(badpat("Empty class", source, i));
+            return Err(self.badpat("Empty class"));
         }
         self.pbuf[class_start] = len as u8;
-        Ok(i)
+        Ok(())
     }
 
     fn store(&mut self, op: u8) -> Result<(), Error> {
@@ -255,15 +255,31 @@ impl Compiler {
         self.pbuf.push(op);
         Ok(())
     }
-}
 
-fn badpat(msg: &'static str, source: &[u8], offset: usize) -> Error {
-    Error {
-        msg,
-        kind: ErrorKind::BadPat {
-            source: source.into(),
-            offset,
-        },
+    #[inline]
+    fn bump(&mut self) -> Option<u8> {
+        if self.offset < self.source.len() {
+            let c = self.source[self.offset];
+            self.offset += 1;
+            Some(c)
+        } else {
+            None
+        }
+    }
+
+    #[inline]
+    fn peek(&self) -> Option<u8> {
+        self.source.get(self.offset).copied()
+    }
+
+    fn badpat(&self, msg: &'static str) -> Error {
+        Error {
+            msg,
+            kind: ErrorKind::BadPat {
+                source: self.source.into(),
+                offset: self.offset,
+            },
+        }
     }
 }
 
