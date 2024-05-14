@@ -178,6 +178,7 @@ impl<'s> Compiler<'s> {
         }
 
         self.store(ENDPAT)?;
+        self.store(b'\0')?;
 
         if self.debug != 0 {
             let mut stdout = stdout().lock();
@@ -189,8 +190,7 @@ impl<'s> Compiler<'s> {
                 }
                 stdout.write_all(b" ").unwrap();
             }
-            // Emulate the NUL terminator.
-            stdout.write_all(b"\\0 \n").unwrap();
+            stdout.write_all(b"\n").unwrap();
         }
         Ok(())
     }
