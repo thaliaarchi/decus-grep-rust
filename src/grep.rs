@@ -339,9 +339,10 @@ fn pmatch(line: &[u8], mut li: usize, pattern: &[u8], mut pi: usize, debug: bool
         let op = pattern[pi];
         pi += 1;
         if debug {
+            let c = line.get(li).copied().unwrap_or(b'\0');
             let mut stdout = stdout().lock();
-            write!(stdout, "byte[{}] = 0{:o}, '", li - start, line[li]).unwrap();
-            stdout.write_all(&[line[li]]).unwrap();
+            write!(stdout, "byte[{}] = 0{:o}, '", li - start, c).unwrap();
+            stdout.write_all(&[c]).unwrap();
             write!(stdout, "', op = 0{op:o}\n").unwrap();
         }
 
