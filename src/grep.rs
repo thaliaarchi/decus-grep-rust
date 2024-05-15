@@ -1,4 +1,4 @@
-use std::io::{self, Write};
+use std::io::{self, stdout, Write};
 
 use crate::{Error, PatternError};
 
@@ -102,6 +102,10 @@ impl Pattern {
     /// When `limit` is 0, the compiled pattern can be of any size. For
     /// compatibility use [`Pattern::DEFAULT_LIMIT`], which corresponds to the
     /// value of `PMAX` in grep.c.
+    ///
+    /// Unlike grep.c, NUL is valid in `source`, because it does not use NUL
+    /// termination. Callers that wish to handle that differently should produce
+    /// their own error or truncate at NUL.
     pub fn compile(source: &[u8], limit: usize) -> Result<Self, Error> {
         let mut compiler = Compiler::new(source, limit);
         compiler.compile().map(|()| Pattern {
@@ -265,6 +269,8 @@ impl<'s> Compiler<'s> {
         if len >= 256 {
             return Err(self.badpat(PatternError::LargeClass));
         } else if len == 0 {
+            // BUG: The length includes the length byte itself, so it will never
+            // be less than 1, making this error unreachable.
             return Err(self.badpat(PatternError::EmptyClass));
         }
         self.pbuf[class_start] = len as u8;
@@ -304,4 +310,158 @@ impl<'s> Compiler<'s> {
             offset: self.offset,
         }
     }
+}
+
+fn pmatch(line: &[u8], mut li: usize, pattern: &[u8], mut pi: usize, debug: bool) -> Option<usize> {
+    if debug {
+        let mut stdout = stdout().lock();
+        stdout.write_all(b"pmatch(\"").unwrap();
+        stdout.write_all(&line[li..]).unwrap();
+        stdout.write_all(b"\")\n").unwrap();
+    }
+
+    // Indexing the pattern does not need bounds checking, because they always
+    // end with `ENDPAT`. If that invariant is somehow invalidated, it's fine to
+    // panic.
+
+    let start = li;
+    while pattern[pi] != ENDPAT {
+        let op = pattern[pi];
+        pi += 1;
+        if debug {
+            let mut stdout = stdout().lock();
+            write!(stdout, "byte[{}] = 0{:o}, '", li - start, line[li]).unwrap();
+            stdout.write_all(&[line[li]]).unwrap();
+            write!(stdout, "', op = 0{op:o}\n").unwrap();
+        }
+
+        match op {
+            CHAR => {
+                let c = pattern[pi];
+                pi += 1;
+                if li >= line.len() || line[li].to_ascii_lowercase() != c {
+                    return None;
+                }
+                li += 1;
+            }
+            BOL => {
+                if li != 0 {
+                    return None;
+                }
+            }
+            EOL => {
+                if li != line.len() {
+                    return None;
+                }
+            }
+            ANY => {
+                if li >= line.len() {
+                    return None;
+                }
+                li += 1;
+            }
+            DIGIT => {
+                if li >= line.len() || !line[li].is_ascii_digit() {
+                    return None;
+                }
+                li += 1;
+            }
+            ALPHA => {
+                if li >= line.len() || !line[li].is_ascii_alphabetic() {
+                    return None;
+                }
+                li += 1;
+            }
+            NALPHA => {
+                if li >= line.len() || !line[li].is_ascii_alphanumeric() {
+                    return None;
+                }
+                li += 1;
+            }
+            PUNCT => {
+                // Unlike grep.c, NUL is matched here, because it is not used as
+                // the string terminator.
+                if li >= line.len() || line[li] > b' ' {
+                    return None;
+                }
+                li += 1;
+            }
+            CLASS | NCLASS => {
+                let c = line[li].to_ascii_lowercase();
+                li += 1;
+                // Use a signed integer to allow underflow in case the length
+                // lies.
+                let mut n = pattern[pi] as i32;
+                pi += 1;
+                loop {
+                    if pattern[pi] == RANGE {
+                        pi += 3;
+                        n -= 2;
+                        if pattern[pi - 2] <= c && c <= pattern[pi - 1] {
+                            break;
+                        }
+                    } else if c == pattern[pi] {
+                        pi += 1;
+                        break;
+                    }
+                    n -= 1;
+                    // BUG: It assumes that empty char classes are impossible,
+                    // but they're allowed due to a bug in `compile`. Checking
+                    // at the tail makes this case read too far.
+                    if n <= 1 {
+                        break;
+                    }
+                }
+                if (op == CLASS) == (n <= 1) {
+                    return None;
+                } else if op == CLASS {
+                    pi = (pi as isize + (n - 2) as isize) as usize;
+                }
+            }
+            MINUS => {
+                if let Some(end) = pmatch(line, li, pattern, pi, debug) {
+                    li = end;
+                }
+                // Bump after the sub-pattern.
+                while pattern[pi] != ENDPAT {
+                    pi += 1;
+                }
+                pi += 1;
+            }
+            PLUS | STAR => {
+                if op == PLUS {
+                    // Require that the sub-pattern matches at least once.
+                    let Some(end) = pmatch(line, li, pattern, pi, debug) else {
+                        return None;
+                    };
+                    li = end;
+                }
+                let start = li;
+                // Match the sub-pattern as many times as possible (greedy).
+                while li < line.len() {
+                    let Some(end) = pmatch(line, li, pattern, pi, debug) else {
+                        break;
+                    };
+                    li = end;
+                }
+                // Bump after the sub-pattern.
+                while pattern[pi] != ENDPAT {
+                    pi += 1;
+                }
+                pi += 1;
+                // Backtrack to the last character in the line, at which the
+                // rest of the pattern matches.
+                while li >= start {
+                    if let Some(end) = pmatch(line, li, pattern, pi, debug) {
+                        return Some(end);
+                    }
+                    li -= 1;
+                }
+                return None;
+            }
+            // TODO: If this is reachable, the diagnostic will be different.
+            _ => unreachable!("bad opcode {op}"),
+        }
+    }
+    Some(li)
 }
