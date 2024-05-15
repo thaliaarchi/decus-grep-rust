@@ -462,11 +462,16 @@ fn pmatch(line: &[u8], mut li: usize, pattern: &[u8], mut pi: usize, debug: bool
                 pi += 1;
                 // Backtrack to the last character in the line, at which the
                 // rest of the pattern matches.
-                while li >= start {
-                    if let Some(end) = pmatch(line, li, pattern, pi, debug) {
-                        return Some(end);
+                if li >= start {
+                    loop {
+                        if let Some(end) = pmatch(line, li, pattern, pi, debug) {
+                            return Some(end);
+                        }
+                        if li == start {
+                            break;
+                        }
+                        li -= 1;
                     }
-                    li -= 1;
                 }
                 return None;
             }
