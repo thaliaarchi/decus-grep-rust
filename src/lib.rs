@@ -1,3 +1,7 @@
+mod errors;
 mod grep;
 
-pub use crate::grep::{compile, Error, ErrorKind, Pattern, DOCUMENTATION, PATDOC};
+pub use crate::{
+    errors::{Error, OtherError, PatternError},
+    grep::{compile, Pattern, DOCUMENTATION, PATDOC},
+};

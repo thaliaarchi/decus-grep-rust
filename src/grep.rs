@@ -1,5 +1,7 @@
 use std::io::{stdout, Write};
 
+use crate::{Error, OtherError, PatternError};
+
 pub const DOCUMENTATION: &str = "grep searches a file for a given pattern.  Execute by
 grep [flags] regular_expression file_list
 
@@ -90,19 +92,7 @@ const RANGE: u8 = 14;
 /// End of the pattern or a repetition
 const ENDPAT: u8 = 15;
 
-#[derive(Clone, Debug)]
-pub struct Error {
-    pub msg: &'static str,
-    pub kind: ErrorKind,
-}
-
-#[derive(Clone, Debug)]
-pub enum ErrorKind {
-    BadPat { source: Box<[u8]>, offset: usize },
-    Other,
-}
-
-/// Compile a regular expression pattern to a [`Pattern`] AST with a size
+/// Compiles a regular expression pattern to a [`Pattern`] AST with a size
 /// limited to `limit` number of bytes.
 ///
 /// When `limit` is 0, the compiled pattern can be of any size. For
@@ -152,7 +142,7 @@ impl<'s> Compiler<'s> {
                     self.pbuf.last(),
                     None | Some(&(BOL | EOL | STAR | PLUS | MINUS))
                 ) {
-                    return Err(self.badpat("Illegal occurrance op."));
+                    return Err(self.badpat(PatternError::IllegalOccurrence));
                 }
                 let pat_end = self.pbuf.len();
                 self.store(ENDPAT)?; // Placeholder
@@ -178,14 +168,14 @@ impl<'s> Compiler<'s> {
                 b'[' => self.cclass()?,
                 b':' => {
                     let Some(c) = self.bump() else {
-                        return Err(self.badpat("No : type"));
+                        return Err(self.badpat(PatternError::NoColonType));
                     };
                     match c {
                         b'a' | b'A' => self.store(ALPHA)?,
                         b'd' | b'D' => self.store(DIGIT)?,
                         b'n' | b'N' => self.store(NALPHA)?,
                         b' ' => self.store(PUNCT)?,
-                        _ => return Err(self.badpat("Unknown : type")),
+                        _ => return Err(self.badpat(PatternError::UnknownColonType)),
                     }
                 }
                 mut c => {
@@ -231,7 +221,7 @@ impl<'s> Compiler<'s> {
 
         loop {
             let Some(c) = self.bump() else {
-                return Err(self.badpat("Unterminated class"));
+                return Err(self.badpat(PatternError::UnterminatedClass));
             };
             if c == b']' {
                 break;
@@ -239,7 +229,7 @@ impl<'s> Compiler<'s> {
             if c == b'\\' {
                 // Store an escaped char.
                 let Some(c) = self.bump() else {
-                    return Err(self.badpat("Class terminates badly"));
+                    return Err(self.badpat(PatternError::BackslashUnterminatedClass));
                 };
                 self.store(c.to_ascii_lowercase())?;
             } else if c == b'-'
@@ -263,9 +253,9 @@ impl<'s> Compiler<'s> {
 
         let len = self.pbuf.len() - class_start;
         if len >= 256 {
-            return Err(self.badpat("Class too large"));
+            return Err(self.badpat(PatternError::LargeClass));
         } else if len == 0 {
-            return Err(self.badpat("Empty class"));
+            return Err(self.badpat(PatternError::EmptyClass));
         }
         self.pbuf[class_start] = len as u8;
         Ok(())
@@ -275,7 +265,7 @@ impl<'s> Compiler<'s> {
         // Emulate a fixed-size buffer, but with a configurable capacity.
         // Unlike grep.c, it can resize when the limit is 0.
         if self.pbuf.len() >= self.pmax && self.pmax != 0 {
-            return Err(error("Pattern too complex"));
+            return Err(error(OtherError::ComplexPattern));
         }
         self.pbuf.push(op);
         Ok(())
@@ -297,13 +287,11 @@ impl<'s> Compiler<'s> {
         self.source.get(self.offset).copied()
     }
 
-    fn badpat(&self, msg: &'static str) -> Error {
-        Error {
-            msg,
-            kind: ErrorKind::BadPat {
-                source: self.source.into(),
-                offset: self.offset,
-            },
+    fn badpat(&self, kind: PatternError) -> Error {
+        Error::Pattern {
+            kind,
+            source: self.source.into(),
+            offset: self.offset,
         }
     }
 }
@@ -328,9 +316,6 @@ impl From<Pattern> for Vec<u8> {
     }
 }
 
-fn error(msg: &'static str) -> Error {
-    Error {
-        msg,
-        kind: ErrorKind::Other,
-    }
+fn error(kind: OtherError) -> Error {
+    Error::Other { kind }
 }
