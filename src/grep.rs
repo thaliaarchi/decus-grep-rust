@@ -1,6 +1,6 @@
 use std::io::{self, Write};
 
-use crate::{Error, OtherError, PatternError};
+use crate::{Error, PatternError};
 
 pub const DOCUMENTATION: &str = "grep searches a file for a given pattern.  Execute by
 grep [flags] regular_expression file_list
@@ -275,7 +275,7 @@ impl<'s> Compiler<'s> {
         // Emulate a fixed-size buffer, but with a configurable capacity.
         // Unlike grep.c, it can resize when the limit is 0.
         if self.pbuf.len() >= self.pmax && self.pmax != 0 {
-            return Err(error(OtherError::ComplexPattern));
+            return Err(self.badpat(PatternError::ComplexPattern));
         }
         self.pbuf.push(op);
         Ok(())
@@ -304,8 +304,4 @@ impl<'s> Compiler<'s> {
             offset: self.offset,
         }
     }
-}
-
-fn error(kind: OtherError) -> Error {
-    Error::Other { kind }
 }

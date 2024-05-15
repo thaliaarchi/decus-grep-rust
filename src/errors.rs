@@ -10,9 +10,6 @@ pub enum Error {
         source: Box<[u8]>,
         offset: usize,
     },
-    Other {
-        kind: OtherError,
-    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -24,10 +21,6 @@ pub enum PatternError {
     BackslashUnterminatedClass,
     LargeClass,
     EmptyClass,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum OtherError {
     ComplexPattern,
 }
 
@@ -35,6 +28,13 @@ impl Error {
     /// Writes the error matching grep.c.
     pub fn dump<W: Write>(&self, mut w: W) -> io::Result<()> {
         match self {
+            Error::Pattern {
+                kind: kind @ PatternError::ComplexPattern,
+                ..
+            } => {
+                w.write_all(kind.message().as_bytes())?;
+                w.write_all(b"\n")
+            }
             Error::Pattern {
                 kind,
                 source,
@@ -46,10 +46,6 @@ impl Error {
                 write!(w, "\"\n-GREP-E-Stopped at byte {offset}, '")?;
                 w.write_all(&[source[offset - 1]])?;
                 write!(w, "'\n?GREP-E-Bad pattern\n")
-            }
-            Error::Other { kind } => {
-                w.write_all(kind.message().as_bytes())?;
-                w.write_all(b"\n")
             }
         }
     }
@@ -66,15 +62,7 @@ impl PatternError {
             PatternError::BackslashUnterminatedClass => "Class terminates badly",
             PatternError::LargeClass => "Class too large",
             PatternError::EmptyClass => "Empty class",
-        }
-    }
-}
-
-impl OtherError {
-    /// Returns the error message matching grep.c.
-    pub fn message(&self) -> &'static str {
-        match self {
-            OtherError::ComplexPattern => "Pattern too complex",
+            PatternError::ComplexPattern => "Pattern too complex",
         }
     }
 }
@@ -99,6 +87,7 @@ impl Display for Error {
                     }
                     PatternError::LargeClass => "class too large",
                     PatternError::EmptyClass => "empty class",
+                    PatternError::ComplexPattern => "pattern too complex",
                 };
                 write!(
                     f,
@@ -106,12 +95,6 @@ impl Display for Error {
                     DebugByteChar(source[offset - 1]),
                     DebugByteString(source),
                 )
-            }
-            Error::Other { kind } => {
-                let message = match kind {
-                    OtherError::ComplexPattern => "pattern too complex",
-                };
-                write!(f, "{message}")
             }
         }
     }
@@ -130,7 +113,6 @@ impl Debug for Error {
                 .field("source", &DebugByteString(source))
                 .field("offset", offset)
                 .finish(),
-            Error::Other { kind } => f.debug_struct("Other").field("kind", kind).finish(),
         }
     }
 }
