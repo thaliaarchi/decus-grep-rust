@@ -113,6 +113,16 @@ impl Pattern {
         })
     }
 
+    /// Matches the line against the pattern and returns whether it does.
+    pub fn matches(&self, line: &[u8], debug: bool) -> bool {
+        for i in 0..line.len() {
+            if pmatch(line, i, &self.pbuf, 0, debug).is_some() {
+                return true;
+            }
+        }
+        false
+    }
+
     pub fn as_bytes(&self) -> &[u8] {
         &self.pbuf
     }

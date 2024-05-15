@@ -1,6 +1,6 @@
 use std::{
     env::args_os,
-    io::{stderr, stdout, Write},
+    io::{stderr, stdin, stdout, BufRead, BufReader, Write},
     process::exit,
 };
 
@@ -25,5 +25,14 @@ fn main() {
     };
     if debug {
         pat.debug(stdout().lock()).unwrap();
+    }
+
+    let mut stdin = BufReader::new(stdin().lock());
+    let mut line = Vec::new();
+    while stdin.read_until(b'\n', &mut line).unwrap() != 0 {
+        if pat.matches(&line, debug) {
+            stdout().write_all(&line).unwrap();
+        }
+        line.clear();
     }
 }
