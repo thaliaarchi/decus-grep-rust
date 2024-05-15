@@ -1,4 +1,4 @@
-use std::io::{stdout, Write};
+use std::io::{self, Write};
 
 use crate::{Error, OtherError, PatternError};
 
@@ -47,18 +47,17 @@ x      An ordinary character (not mentioned below) matches that character.
        [a-z] matches alphabetics, while [z-a] never matches.
 The concatenation of regular expressions is a regular expression."#;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Pattern {
+    pbuf: Vec<u8>,
+}
+
+#[derive(Debug)]
 struct Compiler<'s> {
     source: &'s [u8],
     offset: usize,
     pbuf: Vec<u8>,
     pmax: usize,
-    debug: bool,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct Pattern {
-    pbuf: Vec<u8>,
 }
 
 /// Literal character (case-insensitive)
@@ -92,21 +91,53 @@ const RANGE: u8 = 14;
 /// End of the pattern or a repetition
 const ENDPAT: u8 = 15;
 
-/// Compiles a regular expression pattern to a [`Pattern`] AST with a size
-/// limited to `limit` number of bytes.
-///
-/// When `limit` is 0, the compiled pattern can be of any size. For
-/// compatibility use [`Pattern::DEFAULT_LIMIT`], which corresponds to the value
-/// of `PMAX` in grep.c.
-pub fn compile(source: &[u8], limit: usize, debug: bool) -> Result<Pattern, Error> {
-    let mut compiler = Compiler::new(source, limit, debug);
-    compiler.compile().map(|()| Pattern {
-        pbuf: compiler.pbuf,
-    })
+impl Pattern {
+    /// The original value for `PMAX` in grep.c, which limits the size of the
+    /// compiled pattern to at most 256 bytes.
+    pub const DEFAULT_LIMIT: usize = 256;
+
+    /// Compiles a regular expression pattern to a [`Pattern`] AST with a size
+    /// limited to `limit` number of bytes.
+    ///
+    /// When `limit` is 0, the compiled pattern can be of any size. For
+    /// compatibility use [`Pattern::DEFAULT_LIMIT`], which corresponds to the
+    /// value of `PMAX` in grep.c.
+    pub fn compile(source: &[u8], limit: usize) -> Result<Self, Error> {
+        let mut compiler = Compiler::new(source, limit);
+        compiler.compile().map(|()| Pattern {
+            pbuf: compiler.pbuf,
+        })
+    }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.pbuf
+    }
+
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.pbuf
+    }
+
+    pub fn debug<W: Write>(&self, mut w: W) -> io::Result<()> {
+        for &c in &self.pbuf {
+            if c < b' ' {
+                write!(w, "\\{c:o}")?;
+            } else {
+                w.write_all(&[c])?;
+            }
+            w.write_all(b" ")?;
+        }
+        w.write_all(b"\n")
+    }
+}
+
+impl From<Pattern> for Vec<u8> {
+    fn from(pat: Pattern) -> Self {
+        pat.pbuf
+    }
 }
 
 impl<'s> Compiler<'s> {
-    fn new(source: &'s [u8], limit: usize, debug: bool) -> Self {
+    fn new(source: &'s [u8], limit: usize) -> Self {
         let capacity = if limit != 0 {
             // Use a fixed-size buffer like grep.c.
             limit
@@ -122,18 +153,10 @@ impl<'s> Compiler<'s> {
             offset: 0,
             pbuf: Vec::with_capacity(capacity),
             pmax: limit,
-            debug,
         }
     }
 
     fn compile(&mut self) -> Result<(), Error> {
-        if self.debug {
-            let mut stdout = stdout().lock();
-            stdout.write_all(b"Pattern = \"").unwrap();
-            stdout.write_all(self.source).unwrap();
-            stdout.write_all(b"\"\n").unwrap();
-        }
-
         let mut pat_start = 0;
         while let Some(c) = self.bump() {
             // STAR, PLUS, and MINUS are special.
@@ -192,19 +215,6 @@ impl<'s> Compiler<'s> {
 
         self.store(ENDPAT)?;
         self.store(b'\0')?;
-
-        if self.debug {
-            let mut stdout = stdout().lock();
-            for &c in &self.pbuf {
-                if c < b' ' {
-                    write!(stdout, "\\{c:o}").unwrap();
-                } else {
-                    stdout.write_all(&[c]).unwrap();
-                }
-                stdout.write_all(b" ").unwrap();
-            }
-            stdout.write_all(b"\n").unwrap();
-        }
         Ok(())
     }
 
@@ -293,26 +303,6 @@ impl<'s> Compiler<'s> {
             source: self.source.into(),
             offset: self.offset,
         }
-    }
-}
-
-impl Pattern {
-    /// The original value for `PMAX` in grep.c, which limits the size of the
-    /// compiled pattern to at most 256 bytes.
-    pub const DEFAULT_LIMIT: usize = 256;
-
-    pub fn as_bytes(&self) -> &[u8] {
-        &self.pbuf
-    }
-
-    pub fn into_bytes(self) -> Vec<u8> {
-        self.pbuf
-    }
-}
-
-impl From<Pattern> for Vec<u8> {
-    fn from(pat: Pattern) -> Self {
-        pat.pbuf
     }
 }
 
