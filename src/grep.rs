@@ -461,6 +461,19 @@ fn pmatch(line: &[u8], mut li: usize, pattern: &[u8], mut pi: usize, debug: bool
                 li += 1;
             }
             CLASS | NCLASS => {
+                if li >= line.len() {
+                    // BUG: The line is not bounds-checked and it attempts to
+                    // match it against the character class in every case. When
+                    // the line is at the NUL terminator, it will overrun the
+                    // line. For `CLASS`, it returns no match, so it does not
+                    // read past the line, but for `NCLASS`, it continues, so
+                    // the next iteration will read past the line.
+                    if op == CLASS {
+                        return None;
+                    } else {
+                        panic!("buffer overrun");
+                    }
+                }
                 let c = line[li].to_ascii_lowercase();
                 li += 1;
                 // Use a signed integer to allow underflow in case the length
