@@ -1,4 +1,7 @@
-use std::io::{self, stdout, Write};
+use std::{
+    io::{self, stdout, BufRead, Read, Write},
+    path::Path,
+};
 
 use crate::{Error, PatternError};
 
@@ -60,6 +63,15 @@ struct Compiler<'s> {
     pmax: usize,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Flags {
+    pub cflag: bool,
+    pub fflag: u32,
+    pub nflag: bool,
+    pub vflag: bool,
+    pub debug: u32,
+}
+
 /// Literal character (case-insensitive)
 const CHAR: u8 = 1;
 /// `^` Beginning of line
@@ -106,11 +118,22 @@ impl Pattern {
     /// Unlike grep.c, NUL is valid in `source`, because it does not use NUL
     /// termination. Callers that wish to handle that differently should produce
     /// their own error or truncate at NUL.
-    pub fn compile(source: &[u8], limit: usize) -> Result<Self, Error> {
+    pub fn compile(source: &[u8], limit: usize, debug: bool) -> Result<Self, Error> {
+        if debug {
+            let mut stdout = stdout().lock();
+            stdout.write_all(b"Pattern = \"").unwrap();
+            stdout.write_all(source).unwrap();
+            stdout.write_all(b"\"\n").unwrap();
+        }
         let mut compiler = Compiler::new(source, limit);
-        compiler.compile().map(|()| Pattern {
+        compiler.compile()?;
+        let pattern = Pattern {
             pbuf: compiler.pbuf,
-        })
+        };
+        if debug {
+            pattern.debug(stdout().lock()).unwrap();
+        }
+        Ok(pattern)
     }
 
     /// Matches the line against the pattern and returns whether it does.
@@ -121,6 +144,46 @@ impl Pattern {
             }
         }
         false
+    }
+
+    pub fn grep<R: Read + BufRead>(&self, mut file: R, mut path: Option<&Path>, flags: Flags) {
+        fn list_file(path: &Path) {
+            let mut stdout = stdout().lock();
+            stdout.write_all(b"File ").unwrap();
+            stdout
+                .write_all(path.as_os_str().as_encoded_bytes())
+                .unwrap();
+            stdout.write_all(b":\n").unwrap();
+        }
+
+        // Unlike grep.c, the line buffer is not restricted to 512 bytes (`LMAX`).
+        let mut buf = Vec::new();
+        let mut line = 0;
+        let mut count = 0;
+        while file.read_until(b'\n', &mut buf).unwrap() != 0 {
+            line += 1;
+            if self.matches(&buf, flags.debug > 1) != flags.vflag {
+                count += 1;
+                if !flags.cflag {
+                    let mut stdout = stdout().lock();
+                    if flags.fflag != 0 {
+                        path.take().inspect(|&path| list_file(path));
+                    }
+                    if flags.nflag {
+                        write!(stdout, "{line}\t").unwrap();
+                    }
+                    stdout.write_all(&buf).unwrap();
+                    stdout.write_all(b"\n").unwrap();
+                }
+            }
+            buf.clear();
+        }
+        if flags.cflag {
+            if flags.fflag != 0 {
+                path.take().inspect(|&path| list_file(path));
+            }
+            writeln!(stdout(), "{count}").unwrap();
+        }
     }
 
     pub fn as_bytes(&self) -> &[u8] {
