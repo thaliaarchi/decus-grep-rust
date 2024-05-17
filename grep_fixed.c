@@ -535,7 +535,7 @@ char		   *pattern;  /* (partial) pattern to match   */
 	    return(0);
 	 l++;
 	 n = *p++ & 0377;
-	 do {
+	 while (n-- > 1) {
 	    if (*p == RANGE) {
 	       p += 3;
 	       n -= 2;
@@ -544,7 +544,7 @@ char		   *pattern;  /* (partial) pattern to match   */
 	    }
 	    else if (c == *p++)
 	       break;
-	 } while (--n > 1);
+	 }
 	 if ((op == CLASS) == (n <= 1))
 	    return(0);
 	 if (op == CLASS)
