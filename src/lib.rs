@@ -1,5 +1,7 @@
 mod errors;
-mod grep;
+pub(crate) mod grep;
+#[cfg(test)]
+mod tests;
 
 pub use crate::{
     errors::{MatchError, PatternError, PatternErrorKind},

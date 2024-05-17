@@ -73,35 +73,35 @@ pub struct Flags {
 }
 
 /// Literal character (case-insensitive)
-const CHAR: u8 = 1;
+pub(crate) const CHAR: u8 = 1;
 /// `^` Beginning of line
-const BOL: u8 = 2;
+pub(crate) const BOL: u8 = 2;
 /// `$` End of line
-const EOL: u8 = 3;
+pub(crate) const EOL: u8 = 3;
 /// `.` Any character
-const ANY: u8 = 4;
+pub(crate) const ANY: u8 = 4;
 /// `[` Character class start
-const CLASS: u8 = 5;
+pub(crate) const CLASS: u8 = 5;
 /// `[^` Negated character class start
-const NCLASS: u8 = 6;
+pub(crate) const NCLASS: u8 = 6;
 /// `*` Zero or more repetitions
-const STAR: u8 = 7;
+pub(crate) const STAR: u8 = 7;
 /// `+` One or more repetitions
-const PLUS: u8 = 8;
+pub(crate) const PLUS: u8 = 8;
 /// `-` Zero or one repetitions
-const MINUS: u8 = 9;
+pub(crate) const MINUS: u8 = 9;
 /// `:a` or `:A`, i.e., `[A-Za-z]`
-const ALPHA: u8 = 10;
+pub(crate) const ALPHA: u8 = 10;
 /// `:d` or `:D`, i.e., `[0-9]`
-const DIGIT: u8 = 11;
+pub(crate) const DIGIT: u8 = 11;
 /// `:n` or `:N`, i.e., `[A-Za-z0-9]`
-const NALPHA: u8 = 12;
+pub(crate) const NALPHA: u8 = 12;
 /// `: `, i.e., `[␁- ]` (where ␁ is a literal 0x01 byte)
-const PUNCT: u8 = 13;
+pub(crate) const PUNCT: u8 = 13;
 /// `[x-y]`
-const RANGE: u8 = 14;
+pub(crate) const RANGE: u8 = 14;
 /// End of the pattern or a repetition
-const ENDPAT: u8 = 15;
+pub(crate) const ENDPAT: u8 = 15;
 
 impl Pattern {
     /// The original value for `PMAX` in grep.c, which limits the size of the
@@ -216,6 +216,12 @@ impl Pattern {
 impl From<Pattern> for Vec<u8> {
     fn from(pat: Pattern) -> Self {
         pat.pbuf
+    }
+}
+
+impl PartialEq<[u8]> for Pattern {
+    fn eq(&self, other: &[u8]) -> bool {
+        self.pbuf == other
     }
 }
 
@@ -491,9 +497,11 @@ fn pmatch(
                         if pattern[pi - 2] <= c && c <= pattern[pi - 1] {
                             break;
                         }
-                    } else if c == pattern[pi] {
+                    } else {
                         pi += 1;
-                        break;
+                        if c == pattern[pi - 1] {
+                            break;
+                        }
                     }
                     n -= 1;
                     // BUG: It assumes that empty char classes are impossible,
