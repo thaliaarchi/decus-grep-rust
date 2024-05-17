@@ -3,7 +3,10 @@ use std::{
     path::Path,
 };
 
-use crate::{MatchError, PatternError, PatternErrorKind};
+use crate::{
+    cursor::{LineCursor, PatternCursor},
+    MatchError, PatternError, PatternErrorKind,
+};
 
 pub const DOCUMENTATION: &str = "grep searches a file for a given pattern.  Execute by
 grep [flags] regular_expression file_list
@@ -145,7 +148,13 @@ impl Pattern {
     /// Matches the line against the pattern and returns whether it does.
     pub fn matches(&self, line: &[u8], debug: bool) -> Result<bool, MatchError> {
         for i in 0..line.len() {
-            if pmatch(line, i, &self.pbuf, 0, debug)?.is_some() {
+            if pmatch(
+                LineCursor::new(line, i),
+                PatternCursor::new(&self.pbuf),
+                debug,
+            )?
+            .is_some()
+            {
                 return Ok(true);
             }
         }
@@ -390,135 +399,113 @@ impl<'s> Compiler<'s> {
 }
 
 fn pmatch(
-    line: &[u8],
-    mut li: usize,
-    pattern: &[u8],
-    mut pi: usize,
+    mut line: LineCursor<'_>,
+    mut pattern: PatternCursor<'_>,
     debug: bool,
-) -> Result<Option<usize>, MatchError> {
+) -> Result<Option<isize>, MatchError> {
     if debug {
         let mut stdout = stdout().lock();
-        stdout.write_all(b"pmatch(\"").unwrap();
-        stdout.write_all(&line[li..]).unwrap();
-        stdout.write_all(b"\")\n").unwrap();
+        match line.slice() {
+            Some(line) => {
+                stdout.write_all(b"pmatch(\"").unwrap();
+                stdout.write_all(line).unwrap();
+                stdout.write_all(b"\")\n").unwrap();
+            }
+            None => {
+                // Do not error, but still distinguish it from the in-bounds
+                // case by not quoting.
+                stdout.write_all(b"pmatch(LINE OVERRUN!)\n").unwrap();
+            }
+        }
     }
 
-    // Indexing the pattern does not need bounds checking, because they always
-    // end with `ENDPAT`. If that invariant is somehow invalidated, it's fine to
-    // panic.
-
-    let start = li;
+    let start = line.offset();
     loop {
-        if pi >= pattern.len() {
-            return Err(MatchError::PatternOverrun);
-        }
-        let op = pattern[pi];
+        let op = pattern.next()?;
         if op == ENDPAT {
             break;
         }
-        pi += 1;
         if debug {
-            let c = if li < line.len() {
-                line[li]
-            } else if li == line.len() {
-                b'\0'
-            } else {
-                panic!("undetected line overrun");
-            };
             let mut stdout = stdout().lock();
-            write!(stdout, "byte[{}] = 0{:o}, '", li - start, c).unwrap();
-            stdout.write_all(&[c]).unwrap();
-            write!(stdout, "', op = 0{op:o}\n").unwrap();
+            write!(stdout, "byte[{}] = ", line.offset() - start).unwrap();
+            if let Ok(c) = line.peek() {
+                write!(stdout, "0{:o}, '", c).unwrap();
+                stdout.write_all(&[c]).unwrap();
+                stdout.write_all(b"'").unwrap();
+            } else {
+                stdout.write_all(b"LINE OVERRUN!").unwrap();
+            }
+            stdout.write_all(b", op = ").unwrap();
+            if let Ok(op) = pattern.peek() {
+                write!(stdout, "0{op:o}").unwrap();
+            } else {
+                stdout.write_all(b"PATTERN OVERRUN!").unwrap();
+            }
+            stdout.write_all(b"\n").unwrap();
         }
 
         match op {
             CHAR => {
-                let c = pattern[pi];
-                pi += 1;
-                if li >= line.len() || line[li].to_ascii_lowercase() != c {
+                if line.next()?.to_ascii_lowercase() != pattern.next()? {
                     return Ok(None);
                 }
-                li += 1;
             }
             BOL => {
-                if li != 0 {
+                if !line.at_start() {
                     return Ok(None);
                 }
             }
             EOL => {
-                if li != line.len() {
+                if !line.at_end() {
                     return Ok(None);
                 }
             }
             ANY => {
-                if li >= line.len() {
+                if line.next()? == b'\0' {
                     return Ok(None);
                 }
-                li += 1;
             }
             DIGIT => {
-                if li >= line.len() || !line[li].is_ascii_digit() {
+                if !line.next()?.is_ascii_digit() {
                     return Ok(None);
                 }
-                li += 1;
             }
             ALPHA => {
-                if li >= line.len() || !line[li].is_ascii_alphabetic() {
+                if !line.next()?.is_ascii_alphabetic() {
                     return Ok(None);
                 }
-                li += 1;
             }
             NALPHA => {
-                if li >= line.len() || !line[li].is_ascii_alphanumeric() {
+                if !line.next()?.is_ascii_alphanumeric() {
                     return Ok(None);
                 }
-                li += 1;
             }
             PUNCT => {
-                // Unlike grep.c, NUL is matched here, because it is not used as
-                // the string terminator.
-                if li >= line.len() || line[li] > b' ' {
+                let c = line.next()?;
+                if c == b'\0' || c > b' ' {
                     return Ok(None);
                 }
-                li += 1;
             }
             CLASS | NCLASS => {
-                if li >= line.len() {
-                    // BUG: The line is not bounds-checked and it attempts to
-                    // match it against the character class in every case. When
-                    // the line is at the NUL terminator, it will overrun the
-                    // line. For `CLASS`, it returns no match, so it does not
-                    // read past the line, but for `NCLASS`, it continues, so
-                    // the next iteration will read past the line.
-                    if op == CLASS {
-                        return Ok(None);
-                    } else {
-                        return Err(MatchError::LineOverrun);
-                    }
-                }
-                let c = line[li].to_ascii_lowercase();
-                li += 1;
+                let c = line.next()?.to_ascii_lowercase();
                 // Use a signed integer to allow underflow in case the length
                 // lies.
-                let mut n = pattern[pi] as i32;
-                pi += 1;
+                let mut n = pattern.next()? as isize;
+                // BUG: When the char class is empty, it will enter the loop
+                // when it shouldn't. The loop condition should be at the head.
                 loop {
-                    if pattern[pi] == RANGE {
-                        pi += 3;
+                    let op = pattern.next()?;
+                    if op == RANGE {
+                        let low = pattern.next()?;
+                        let high = pattern.next()?;
                         n -= 2;
-                        if pattern[pi - 2] <= c && c <= pattern[pi - 1] {
+                        if low <= c && c <= high {
                             break;
                         }
-                    } else {
-                        pi += 1;
-                        if c == pattern[pi - 1] {
-                            break;
-                        }
+                    } else if op == c {
+                        break;
                     }
                     n -= 1;
-                    // BUG: It assumes that empty char classes are impossible,
-                    // but they're allowed due to a bug in `compile`. Checking
-                    // at the tail makes this case read too far.
                     if n <= 1 {
                         break;
                     }
@@ -526,57 +513,46 @@ fn pmatch(
                 if (op == CLASS) == (n <= 1) {
                     return Ok(None);
                 } else if op == CLASS {
-                    pi = (pi as isize + (n - 2) as isize) as usize;
+                    pattern.bump(n - 2);
                 }
             }
             MINUS => {
-                if let Some(end) = pmatch(line, li, pattern, pi, debug)? {
-                    li = end;
+                if let Some(end) = pmatch(line, pattern, debug)? {
+                    line.set_offset(end);
                 }
                 // Bump after the sub-pattern.
-                while pattern[pi] != ENDPAT {
-                    pi += 1;
-                }
-                pi += 1;
+                while pattern.next()? != ENDPAT {}
             }
             PLUS | STAR => {
                 if op == PLUS {
                     // Require that the sub-pattern matches at least once.
-                    let Some(end) = pmatch(line, li, pattern, pi, debug)? else {
+                    let Some(end) = pmatch(line, pattern, debug)? else {
                         return Ok(None);
                     };
-                    li = end;
+                    line.set_offset(end);
                 }
-                let start = li;
+                let start = line.offset();
                 // Match the sub-pattern as many times as possible (greedy).
-                while li < line.len() {
-                    let Some(end) = pmatch(line, li, pattern, pi, debug)? else {
+                while line.peek()? != b'\0' {
+                    let Some(end) = pmatch(line, pattern, debug)? else {
                         break;
                     };
-                    li = end;
+                    line.set_offset(end);
                 }
                 // Bump after the sub-pattern.
-                while pattern[pi] != ENDPAT {
-                    pi += 1;
-                }
-                pi += 1;
+                while pattern.next()? != ENDPAT {}
                 // Backtrack to the last character in the line, at which the
                 // rest of the pattern matches.
-                if li >= start {
-                    loop {
-                        if let Some(end) = pmatch(line, li, pattern, pi, debug)? {
-                            return Ok(Some(end));
-                        }
-                        if li == start {
-                            break;
-                        }
-                        li -= 1;
+                while line.offset() >= start {
+                    if let Some(end) = pmatch(line, pattern, debug)? {
+                        return Ok(Some(end));
                     }
+                    line.bump(-1);
                 }
                 return Ok(None);
             }
             op => return Err(MatchError::BadOpcode { op }),
         }
     }
-    Ok(Some(li))
+    Ok(Some(line.offset()))
 }

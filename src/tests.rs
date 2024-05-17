@@ -200,14 +200,14 @@ fn nclass_range_confusion() {
 
     // Skips the `CLASS` opcode and its length and executes at its chars, which
     // are reinterpreted as a 255-long class.
-    // test!(
-    //     b"[^\x0e][\x05\xff]" = [NCLASS, 2, b'\x0e', CLASS, 3, b'\x05', b'\xff', ENDPAT, 0], // Like `[^\x05-0x01]`
-    //     b"abc\n" => Err(MatchError::PatternOverrun),
-    // );
-    // test!(
-    //     b"[^\x0e][^\x05\xff]" = [NCLASS, 2, b'\x0e', NCLASS, 3, b'\x05', b'\xff', ENDPAT, 0], // Like `[^\x06-0x01]`
-    //     b"abc\n" => Err(MatchError::PatternOverrun),
-    // );
+    test!(
+        b"[^\x0e][\x05\xff]" = [NCLASS, 2, b'\x0e', CLASS, 3, b'\x05', b'\xff', ENDPAT, 0], // Like `[^\x05-0x01]`
+        b"abc\n" => Err(MatchError::PatternOverrun),
+    );
+    test!(
+        b"[^\x0e][^\x05\xff]" = [NCLASS, 2, b'\x0e', NCLASS, 3, b'\x05', b'\xff', ENDPAT, 0], // Like `[^\x06-0x01]`
+        b"abc\n" => Err(MatchError::PatternOverrun),
+    );
 
     // Skips the `STAR`, `PLUS`, or `MINUS` opcode and executes one byte into in
     // its sub-pattern.

@@ -1,3 +1,4 @@
+pub(crate) mod cursor;
 mod errors;
 pub(crate) mod grep;
 #[cfg(test)]
