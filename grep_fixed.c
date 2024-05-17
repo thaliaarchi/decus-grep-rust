@@ -383,6 +383,11 @@ char	   *src;      /* Class start	       */
 	 c = *s++;		 /* Get end char and*/
 	 store(tolower(c));	 /* Store it	    */
       }
+      else if (c == RANGE) {
+	 store(RANGE);
+	 store(c);
+	 store(c);
+      }
       else {
 	 store(tolower(c));	 /* Store normal char */
       }
