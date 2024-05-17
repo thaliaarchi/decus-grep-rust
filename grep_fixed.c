@@ -531,6 +531,8 @@ char		   *pattern;  /* (partial) pattern to match   */
       case CLASS:
       case NCLASS:
 	 c = tolower(*l);
+	 if (c == 0)
+	    return(0);
 	 l++;
 	 n = *p++ & 0377;
 	 do {
