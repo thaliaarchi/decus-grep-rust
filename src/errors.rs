@@ -22,6 +22,12 @@ pub enum PatternErrorKind {
     ComplexPattern,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum MatchError {
+    BadOpcode { op: u8 },
+    LineOverrun,
+}
+
 impl PatternError {
     /// Writes the error matching grep.c.
     pub fn dump<W: Write>(&self, mut w: W) -> io::Result<()> {

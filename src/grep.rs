@@ -3,7 +3,7 @@ use std::{
     path::Path,
 };
 
-use crate::{PatternError, PatternErrorKind};
+use crate::{MatchError, PatternError, PatternErrorKind};
 
 pub const DOCUMENTATION: &str = "grep searches a file for a given pattern.  Execute by
 grep [flags] regular_expression file_list
@@ -143,13 +143,13 @@ impl Pattern {
     }
 
     /// Matches the line against the pattern and returns whether it does.
-    pub fn matches(&self, line: &[u8], debug: bool) -> bool {
+    pub fn matches(&self, line: &[u8], debug: bool) -> Result<bool, MatchError> {
         for i in 0..line.len() {
-            if pmatch(line, i, &self.pbuf, 0, debug).is_some() {
-                return true;
+            if pmatch(line, i, &self.pbuf, 0, debug)?.is_some() {
+                return Ok(true);
             }
         }
-        false
+        Ok(false)
     }
 
     pub fn grep<R: Read + BufRead>(&self, mut file: R, mut path: Option<&Path>, flags: Flags) {
@@ -168,7 +168,7 @@ impl Pattern {
         let mut count = 0;
         while file.read_until(b'\n', &mut buf).unwrap() != 0 {
             line += 1;
-            if self.matches(&buf, flags.debug > 1) != flags.vflag {
+            if self.matches(&buf, flags.debug > 1).unwrap() != flags.vflag {
                 count += 1;
                 if !flags.cflag {
                     let mut stdout = stdout().lock();
@@ -383,7 +383,13 @@ impl<'s> Compiler<'s> {
     }
 }
 
-fn pmatch(line: &[u8], mut li: usize, pattern: &[u8], mut pi: usize, debug: bool) -> Option<usize> {
+fn pmatch(
+    line: &[u8],
+    mut li: usize,
+    pattern: &[u8],
+    mut pi: usize,
+    debug: bool,
+) -> Result<Option<usize>, MatchError> {
     if debug {
         let mut stdout = stdout().lock();
         stdout.write_all(b"pmatch(\"").unwrap();
@@ -412,41 +418,41 @@ fn pmatch(line: &[u8], mut li: usize, pattern: &[u8], mut pi: usize, debug: bool
                 let c = pattern[pi];
                 pi += 1;
                 if li >= line.len() || line[li].to_ascii_lowercase() != c {
-                    return None;
+                    return Ok(None);
                 }
                 li += 1;
             }
             BOL => {
                 if li != 0 {
-                    return None;
+                    return Ok(None);
                 }
             }
             EOL => {
                 if li != line.len() {
-                    return None;
+                    return Ok(None);
                 }
             }
             ANY => {
                 if li >= line.len() {
-                    return None;
+                    return Ok(None);
                 }
                 li += 1;
             }
             DIGIT => {
                 if li >= line.len() || !line[li].is_ascii_digit() {
-                    return None;
+                    return Ok(None);
                 }
                 li += 1;
             }
             ALPHA => {
                 if li >= line.len() || !line[li].is_ascii_alphabetic() {
-                    return None;
+                    return Ok(None);
                 }
                 li += 1;
             }
             NALPHA => {
                 if li >= line.len() || !line[li].is_ascii_alphanumeric() {
-                    return None;
+                    return Ok(None);
                 }
                 li += 1;
             }
@@ -454,7 +460,7 @@ fn pmatch(line: &[u8], mut li: usize, pattern: &[u8], mut pi: usize, debug: bool
                 // Unlike grep.c, NUL is matched here, because it is not used as
                 // the string terminator.
                 if li >= line.len() || line[li] > b' ' {
-                    return None;
+                    return Ok(None);
                 }
                 li += 1;
             }
@@ -467,9 +473,9 @@ fn pmatch(line: &[u8], mut li: usize, pattern: &[u8], mut pi: usize, debug: bool
                     // read past the line, but for `NCLASS`, it continues, so
                     // the next iteration will read past the line.
                     if op == CLASS {
-                        return None;
+                        return Ok(None);
                     } else {
-                        panic!("buffer overrun");
+                        return Err(MatchError::LineOverrun);
                     }
                 }
                 let c = line[li].to_ascii_lowercase();
@@ -498,13 +504,13 @@ fn pmatch(line: &[u8], mut li: usize, pattern: &[u8], mut pi: usize, debug: bool
                     }
                 }
                 if (op == CLASS) == (n <= 1) {
-                    return None;
+                    return Ok(None);
                 } else if op == CLASS {
                     pi = (pi as isize + (n - 2) as isize) as usize;
                 }
             }
             MINUS => {
-                if let Some(end) = pmatch(line, li, pattern, pi, debug) {
+                if let Some(end) = pmatch(line, li, pattern, pi, debug)? {
                     li = end;
                 }
                 // Bump after the sub-pattern.
@@ -516,15 +522,15 @@ fn pmatch(line: &[u8], mut li: usize, pattern: &[u8], mut pi: usize, debug: bool
             PLUS | STAR => {
                 if op == PLUS {
                     // Require that the sub-pattern matches at least once.
-                    let Some(end) = pmatch(line, li, pattern, pi, debug) else {
-                        return None;
+                    let Some(end) = pmatch(line, li, pattern, pi, debug)? else {
+                        return Ok(None);
                     };
                     li = end;
                 }
                 let start = li;
                 // Match the sub-pattern as many times as possible (greedy).
                 while li < line.len() {
-                    let Some(end) = pmatch(line, li, pattern, pi, debug) else {
+                    let Some(end) = pmatch(line, li, pattern, pi, debug)? else {
                         break;
                     };
                     li = end;
@@ -538,8 +544,8 @@ fn pmatch(line: &[u8], mut li: usize, pattern: &[u8], mut pi: usize, debug: bool
                 // rest of the pattern matches.
                 if li >= start {
                     loop {
-                        if let Some(end) = pmatch(line, li, pattern, pi, debug) {
-                            return Some(end);
+                        if let Some(end) = pmatch(line, li, pattern, pi, debug)? {
+                            return Ok(Some(end));
                         }
                         if li == start {
                             break;
@@ -547,11 +553,10 @@ fn pmatch(line: &[u8], mut li: usize, pattern: &[u8], mut pi: usize, debug: bool
                         li -= 1;
                     }
                 }
-                return None;
+                return Ok(None);
             }
-            // TODO: If this is reachable, the diagnostic will be different.
-            _ => unreachable!("bad opcode {op}"),
+            op => return Err(MatchError::BadOpcode { op }),
         }
     }
-    Some(li)
+    Ok(Some(li))
 }
