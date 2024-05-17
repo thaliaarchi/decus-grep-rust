@@ -4,7 +4,7 @@ use std::{
 };
 
 use crate::{
-    cursor::{LineCursor, PatternCursor},
+    buffer::{LineCursor, PatternCursor},
     MatchError, PatternError, PatternErrorKind,
 };
 

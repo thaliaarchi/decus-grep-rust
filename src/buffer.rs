@@ -1,5 +1,49 @@
 use crate::errors::MatchError;
 
+/// A length-tracking buffer, which safely simulates a NUL-terminated buffer
+/// with overruns.
+pub struct OverrunBuffer {
+    buf: Vec<u8>,
+    allowed_len: usize,
+}
+
+impl OverrunBuffer {
+    /// Creates a new `OverrunBuffer`, which has no out-of-bounds memory
+    /// defined. Any out-of-bounds reads will result in an error. If `line`
+    /// contains any NUL bytes it will be effectively truncated to the first
+    /// NUL.
+    #[inline]
+    pub fn with_line<T: Into<Vec<u8>>>(line: T) -> Self {
+        let mut buf = line.into();
+        buf.push(b'\0');
+        let allowed_len = buf.len();
+        OverrunBuffer { buf, allowed_len }
+    }
+
+    /// Creates a new `OverrunBuffer`, which has some out-of-bounds memory
+    /// defined.
+    ///
+    /// Bytes from `0..allowed_len` are considered in bounds and bytes from
+    /// `allowed_len..buf.len()` are considered out of bounds, but can still be
+    /// read. Reads beyond this buffer will result in an error.
+    ///
+    /// The byte at `buf[allowed_len-1]` should usually be NUL, unless you are
+    /// simulating an unterminated string (which is not possible in grep.c).
+    #[inline]
+    pub fn with_overrun<T: Into<Vec<u8>>>(buf: T, allowed_len: usize) -> Self {
+        let buf = buf.into();
+        assert!(allowed_len <= buf.len());
+        OverrunBuffer { buf, allowed_len }
+    }
+}
+
+impl Into<Vec<u8>> for OverrunBuffer {
+    #[inline(always)]
+    fn into(self) -> Vec<u8> {
+        self.buf
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct LineCursor<'a> {
     line: &'a [u8],
