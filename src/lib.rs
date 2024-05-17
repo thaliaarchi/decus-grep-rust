@@ -2,6 +2,6 @@ mod errors;
 mod grep;
 
 pub use crate::{
-    errors::{Error, PatternError},
+    errors::{PatternError, PatternErrorKind},
     grep::{Flags, Pattern, DOCUMENTATION, PATDOC},
 };

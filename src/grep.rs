@@ -3,7 +3,7 @@ use std::{
     path::Path,
 };
 
-use crate::{Error, PatternError};
+use crate::{PatternError, PatternErrorKind};
 
 pub const DOCUMENTATION: &str = "grep searches a file for a given pattern.  Execute by
 grep [flags] regular_expression file_list
@@ -118,7 +118,7 @@ impl Pattern {
     /// Unlike grep.c, NUL is valid in `source`, because it does not use NUL
     /// termination. Callers that wish to handle that differently should produce
     /// their own error or truncate at NUL.
-    pub fn compile(source: &[u8], limit: usize, debug: bool) -> Result<Self, Error> {
+    pub fn compile(source: &[u8], limit: usize, debug: bool) -> Result<Self, PatternError> {
         if debug {
             let mut stdout = stdout().lock();
             stdout.write_all(b"Pattern = \"").unwrap();
@@ -126,7 +126,13 @@ impl Pattern {
             stdout.write_all(b"\"\n").unwrap();
         }
         let mut compiler = Compiler::new(source, limit);
-        compiler.compile()?;
+        if let Err(kind) = compiler.compile() {
+            return Err(PatternError {
+                kind,
+                source: source.into(),
+                offset: compiler.offset,
+            });
+        };
         let pattern = Pattern {
             pbuf: compiler.pbuf,
         };
@@ -233,7 +239,7 @@ impl<'s> Compiler<'s> {
         }
     }
 
-    fn compile(&mut self) -> Result<(), Error> {
+    fn compile(&mut self) -> Result<(), PatternErrorKind> {
         let mut pat_start = 0;
         while let Some(c) = self.bump() {
             // STAR, PLUS, and MINUS are special.
@@ -242,7 +248,7 @@ impl<'s> Compiler<'s> {
                     self.pbuf.last(),
                     None | Some(&(BOL | EOL | STAR | PLUS | MINUS))
                 ) {
-                    return Err(self.badpat(PatternError::IllegalOccurrence));
+                    return Err(PatternErrorKind::IllegalOccurrence);
                 }
                 let pat_end = self.pbuf.len();
                 self.store(ENDPAT)?; // Placeholder
@@ -268,14 +274,14 @@ impl<'s> Compiler<'s> {
                 b'[' => self.cclass()?,
                 b':' => {
                     let Some(c) = self.bump() else {
-                        return Err(self.badpat(PatternError::NoColonType));
+                        return Err(PatternErrorKind::NoColonType);
                     };
                     match c {
                         b'a' | b'A' => self.store(ALPHA)?,
                         b'd' | b'D' => self.store(DIGIT)?,
                         b'n' | b'N' => self.store(NALPHA)?,
                         b' ' => self.store(PUNCT)?,
-                        _ => return Err(self.badpat(PatternError::UnknownColonType)),
+                        _ => return Err(PatternErrorKind::UnknownColonType),
                     }
                 }
                 mut c => {
@@ -295,7 +301,7 @@ impl<'s> Compiler<'s> {
         Ok(())
     }
 
-    fn cclass(&mut self) -> Result<(), Error> {
+    fn cclass(&mut self) -> Result<(), PatternErrorKind> {
         let class = if self.peek() == Some(b'^') {
             self.bump();
             NCLASS
@@ -308,7 +314,7 @@ impl<'s> Compiler<'s> {
 
         loop {
             let Some(c) = self.bump() else {
-                return Err(self.badpat(PatternError::UnterminatedClass));
+                return Err(PatternErrorKind::UnterminatedClass);
             };
             if c == b']' {
                 break;
@@ -316,7 +322,7 @@ impl<'s> Compiler<'s> {
             if c == b'\\' {
                 // Store an escaped char.
                 let Some(c) = self.bump() else {
-                    return Err(self.badpat(PatternError::BackslashUnterminatedClass));
+                    return Err(PatternErrorKind::BackslashUnterminatedClass);
                 };
                 self.store(c.to_ascii_lowercase())?;
             } else if c == b'-'
@@ -340,21 +346,21 @@ impl<'s> Compiler<'s> {
 
         let len = self.pbuf.len() - class_start;
         if len >= 256 {
-            return Err(self.badpat(PatternError::LargeClass));
+            return Err(PatternErrorKind::LargeClass);
         } else if len == 0 {
             // BUG: The length includes the length byte itself, so it will never
             // be less than 1, making this error unreachable.
-            return Err(self.badpat(PatternError::EmptyClass));
+            return Err(PatternErrorKind::EmptyClass);
         }
         self.pbuf[class_start] = len as u8;
         Ok(())
     }
 
-    fn store(&mut self, op: u8) -> Result<(), Error> {
+    fn store(&mut self, op: u8) -> Result<(), PatternErrorKind> {
         // Emulate a fixed-size buffer, but with a configurable capacity.
         // Unlike grep.c, it can resize when the limit is 0.
         if self.pbuf.len() >= self.pmax && self.pmax != 0 {
-            return Err(self.badpat(PatternError::ComplexPattern));
+            return Err(PatternErrorKind::ComplexPattern);
         }
         self.pbuf.push(op);
         Ok(())
@@ -374,14 +380,6 @@ impl<'s> Compiler<'s> {
     #[inline]
     fn peek(&self) -> Option<u8> {
         self.source.get(self.offset).copied()
-    }
-
-    fn badpat(&self, kind: PatternError) -> Error {
-        Error::Pattern {
-            kind,
-            source: self.source.into(),
-            offset: self.offset,
-        }
     }
 }
 

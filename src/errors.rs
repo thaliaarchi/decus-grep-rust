@@ -4,16 +4,14 @@ use std::{
 };
 
 #[derive(Clone, PartialEq, Eq, Hash)]
-pub enum Error {
-    Pattern {
-        kind: PatternError,
-        source: Box<[u8]>,
-        offset: usize,
-    },
+pub struct PatternError {
+    pub kind: PatternErrorKind,
+    pub source: Box<[u8]>,
+    pub offset: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum PatternError {
+pub enum PatternErrorKind {
     IllegalOccurrence,
     UnknownColonType,
     NoColonType,
@@ -24,96 +22,72 @@ pub enum PatternError {
     ComplexPattern,
 }
 
-impl Error {
+impl PatternError {
     /// Writes the error matching grep.c.
     pub fn dump<W: Write>(&self, mut w: W) -> io::Result<()> {
-        match self {
-            Error::Pattern {
-                kind: kind @ PatternError::ComplexPattern,
-                ..
-            } => {
-                w.write_all(kind.message().as_bytes())?;
-                w.write_all(b"\n")
-            }
-            Error::Pattern {
-                kind,
-                source,
-                offset,
-            } => {
-                // BUG: No space between “pattern is” and quoted string.
-                write!(w, "-GREP-E-{}, pattern is\"", kind.message())?;
-                w.write_all(source)?;
-                write!(w, "\"\n-GREP-E-Stopped at byte {offset}, '")?;
-                w.write_all(&[source[offset - 1]])?;
-                write!(w, "'\n?GREP-E-Bad pattern\n")
-            }
+        if self.kind == PatternErrorKind::ComplexPattern {
+            w.write_all(self.kind.message().as_bytes())?;
+            w.write_all(b"\n")
+        } else {
+            // BUG: No space between “pattern is” and quoted string.
+            write!(w, "-GREP-E-{}, pattern is\"", self.kind.message())?;
+            w.write_all(&self.source)?;
+            write!(w, "\"\n-GREP-E-Stopped at byte {}, '", self.offset)?;
+            w.write_all(&[self.source[self.offset - 1]])?;
+            write!(w, "'\n?GREP-E-Bad pattern\n")
         }
     }
 }
 
-impl PatternError {
+impl PatternErrorKind {
     /// Returns the error message matching grep.c.
     pub fn message(&self) -> &'static str {
         match self {
-            PatternError::IllegalOccurrence => "Illegal occurrance op.", // sic
-            PatternError::UnknownColonType => "Unknown : type",
-            PatternError::NoColonType => "No : type",
-            PatternError::UnterminatedClass => "Unterminated class",
-            PatternError::BackslashUnterminatedClass => "Class terminates badly",
-            PatternError::LargeClass => "Class too large",
-            PatternError::EmptyClass => "Empty class",
-            PatternError::ComplexPattern => "Pattern too complex",
+            PatternErrorKind::IllegalOccurrence => "Illegal occurrance op.", // sic
+            PatternErrorKind::UnknownColonType => "Unknown : type",
+            PatternErrorKind::NoColonType => "No : type",
+            PatternErrorKind::UnterminatedClass => "Unterminated class",
+            PatternErrorKind::BackslashUnterminatedClass => "Class terminates badly",
+            PatternErrorKind::LargeClass => "Class too large",
+            PatternErrorKind::EmptyClass => "Empty class",
+            PatternErrorKind::ComplexPattern => "Pattern too complex",
         }
     }
 }
 
-impl std::error::Error for Error {}
+impl std::error::Error for PatternError {}
 
 /// Displays the error according to Rust conventions.
-impl Display for Error {
+impl Display for PatternError {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            Error::Pattern {
-                kind,
-                source,
-                offset,
-            } => {
-                let message = match kind {
-                    PatternError::IllegalOccurrence => "illegal occurrence",
-                    PatternError::UnknownColonType => "unknown ':' type",
-                    PatternError::NoColonType => "missing ':' type",
-                    PatternError::UnterminatedClass | PatternError::BackslashUnterminatedClass => {
-                        "unterminated class"
-                    }
-                    PatternError::LargeClass => "class too large",
-                    PatternError::EmptyClass => "empty class",
-                    PatternError::ComplexPattern => "pattern too complex",
-                };
-                write!(
-                    f,
-                    "bad pattern: {message} at byte {offset} ({:?}) in {:?}",
-                    DebugByteChar(source[offset - 1]),
-                    DebugByteString(source),
-                )
+        let message = match self.kind {
+            PatternErrorKind::IllegalOccurrence => "illegal occurrence",
+            PatternErrorKind::UnknownColonType => "unknown ':' type",
+            PatternErrorKind::NoColonType => "missing ':' type",
+            PatternErrorKind::UnterminatedClass | PatternErrorKind::BackslashUnterminatedClass => {
+                "unterminated class"
             }
-        }
+            PatternErrorKind::LargeClass => "class too large",
+            PatternErrorKind::EmptyClass => "empty class",
+            PatternErrorKind::ComplexPattern => "pattern too complex",
+        };
+        write!(
+            f,
+            "bad pattern: {message} at byte {} ({:?}) in {:?}",
+            self.offset,
+            DebugByteChar(self.source[self.offset - 1]),
+            DebugByteString(&self.source),
+        )
     }
 }
 
-impl Debug for Error {
+impl Debug for PatternError {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            Error::Pattern {
-                kind,
-                source,
-                offset,
-            } => f
-                .debug_struct("Pattern")
-                .field("kind", kind)
-                .field("source", &DebugByteString(source))
-                .field("offset", offset)
-                .finish(),
-        }
+        f.debug_struct("Pattern")
+            .field("kind", &self.kind)
+            .field("source", &DebugByteString(&self.source))
+            .field("offset", &self.offset)
+            .finish()
     }
 }
 
