@@ -408,11 +408,23 @@ fn pmatch(
     // panic.
 
     let start = li;
-    while pattern[pi] != ENDPAT {
+    loop {
+        if pi >= pattern.len() {
+            return Err(MatchError::PatternOverrun);
+        }
         let op = pattern[pi];
+        if op == ENDPAT {
+            break;
+        }
         pi += 1;
         if debug {
-            let c = line.get(li).copied().unwrap_or(b'\0');
+            let c = if li < line.len() {
+                line[li]
+            } else if li == line.len() {
+                b'\0'
+            } else {
+                panic!("undetected line overrun");
+            };
             let mut stdout = stdout().lock();
             write!(stdout, "byte[{}] = 0{:o}, '", li - start, c).unwrap();
             stdout.write_all(&[c]).unwrap();

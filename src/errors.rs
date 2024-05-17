@@ -25,6 +25,7 @@ pub enum PatternErrorKind {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum MatchError {
     BadOpcode { op: u8 },
+    PatternOverrun,
     LineOverrun,
 }
 
