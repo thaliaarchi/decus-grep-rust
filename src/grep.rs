@@ -156,20 +156,38 @@ impl Pattern {
         }
     }
 
-    /// Matches the line against the pattern and returns whether it does.
-    pub fn matches(&self, line: &[u8], debug: bool) -> Result<bool, MatchError> {
-        for i in 0..line.len() {
-            if pmatch(
-                LineCursor::new(line, i),
-                PatternCursor::new(&self.pbuf),
-                debug,
-            )?
-            .is_some()
-            {
+    /// Searches the line against the pattern and returns whether it matches.
+    pub fn is_match(&self, line: &[u8], debug: bool) -> Result<bool, MatchError> {
+        self.is_match_at(line, 0, debug)
+    }
+
+    /// Searches the line starting at an offset against the pattern and returns
+    /// whether it matches. The match must begin at the offset or later.
+    pub fn is_match_at(&self, line: &[u8], start: usize, debug: bool) -> Result<bool, MatchError> {
+        for i in start..line.len() {
+            if self.is_match_anchored(line, i, debug)? {
                 return Ok(true);
             }
         }
         Ok(false)
+    }
+
+    /// Searches the line anchored at an offset against the pattern and returns
+    /// whether it matches. The match must begin at the offset. The beginning of
+    /// line anchor `^` only matches at offset 0, so this has different behavior
+    /// from slicing and prepending `^` to the pattern.
+    pub fn is_match_anchored(
+        &self,
+        line: &[u8],
+        offset: usize,
+        debug: bool,
+    ) -> Result<bool, MatchError> {
+        pmatch(
+            LineCursor::new(line, offset),
+            PatternCursor::new(&self.pbuf),
+            debug,
+        )
+        .map(|opt| opt.is_some())
     }
 
     pub fn grep<R: Read + BufRead>(
@@ -191,7 +209,7 @@ impl Pattern {
         let mut count = 0i32;
         while file.read_until(b'\n', &mut buf)? != 0 {
             line += 1;
-            if self.matches(&buf, flags.debug > 1)? != flags.vflag {
+            if self.is_match(&buf, flags.debug > 1)? != flags.vflag {
                 count += 1;
                 if !flags.cflag {
                     let mut stdout = stdout().lock();

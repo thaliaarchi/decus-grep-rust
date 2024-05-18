@@ -10,7 +10,7 @@ macro_rules! test(($pattern:literal = $compiled:expr, $($text:literal => $res:ex
     assert_eq!(pattern, $compiled[..]);
     $(
         assert_eq!(
-            pattern.matches($text, false),
+            pattern.is_match($text, false),
             $res,
             "matching {} against {}",
             stringify!($pattern),
