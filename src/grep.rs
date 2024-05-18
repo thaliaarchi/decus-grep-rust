@@ -58,6 +58,13 @@ The concatenation of regular expressions is a regular expression.
 "#;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Grep {
+    pattern: Pattern,
+    files: Vec<PathBuf>,
+    flags: Flags,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Pattern {
     source: Vec<u8>,
     pbuf: Vec<u8>,
@@ -111,7 +118,20 @@ pub(crate) const RANGE: u8 = 14;
 /// End of the pattern or a repetition
 pub(crate) const ENDPAT: u8 = 15;
 
-impl Flags {
+impl Grep {
+    pub fn new(pattern: Pattern, files: Vec<PathBuf>, flags: Flags) -> Self {
+        Grep {
+            pattern,
+            files,
+            flags,
+        }
+    }
+
+    pub fn from_args(args: Vec<OsString>) -> Result<Self, CliError> {
+        let (pattern, files, flags) = Grep::parse_args(args)?;
+        Ok(Grep::new(pattern, files, flags))
+    }
+
     pub fn parse_args(args: Vec<OsString>) -> Result<(Pattern, Vec<PathBuf>, Flags), CliError> {
         if args.len() <= 1 {
             return Err(UsageError::NoArguments.into());

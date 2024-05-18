@@ -5,11 +5,11 @@ use std::{
     process::exit,
 };
 
-use decus_grep_rust::{CliError, Flags, PATTERN_DOC, USAGE_DOC};
+use decus_grep_rust::{CliError, Grep, PATTERN_DOC, USAGE_DOC};
 
 fn main() {
     let args = args_os().collect::<Vec<_>>();
-    let (pattern, files, mut flags) = match Flags::parse_args(args) {
+    let (pattern, files, mut flags) = match Grep::parse_args(args) {
         Ok(parsed) => parsed,
         Err(CliError::Help) => {
             let mut stdout = stdout().lock();
