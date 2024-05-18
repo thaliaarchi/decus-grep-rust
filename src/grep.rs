@@ -1,14 +1,16 @@
 use std::{
+    ffi::OsString,
     io::{self, stdout, BufRead, Read, Write},
-    path::Path,
+    path::{Path, PathBuf},
 };
 
 use crate::{
     buffer::{LineCursor, PatternCursor},
+    errors::{CliError, UsageError},
     GrepError, MatchError, PatternError, PatternErrorKind,
 };
 
-pub const DOCUMENTATION: &str = "grep searches a file for a given pattern.  Execute by
+pub const USAGE_DOC: &str = "grep searches a file for a given pattern.  Execute by
 grep [flags] regular_expression file_list
 
 Flags are single characters preceeded by '-':
@@ -21,9 +23,10 @@ The file_list is a list of files (wildcards are acceptable on RSX modes).
 
 The file name is normally printed if there is a file given.
 The -f flag reverses this action (print name no file, not if more).
+
 ";
 
-pub const PATDOC: &str = r#"The regular_expression defines the pattern to search for.  Upper- and
+pub const PATTERN_DOC: &str = r#"The regular_expression defines the pattern to search for.  Upper- and
 lower-case are always ignored.  Blank lines never match.  The expression
 should be quoted to prevent file-name translation.
 x      An ordinary character (not mentioned below) matches that character.
@@ -51,7 +54,8 @@ x      An ordinary character (not mentioned below) matches that character.
        matches "abc" but not "axb".  A range of characters may be
        specified by two characters separated by "-".  Note that,
        [a-z] matches alphabetics, while [z-a] never matches.
-The concatenation of regular expressions is a regular expression."#;
+The concatenation of regular expressions is a regular expression.
+"#;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Pattern {
@@ -106,6 +110,56 @@ pub(crate) const PUNCT: u8 = 13;
 pub(crate) const RANGE: u8 = 14;
 /// End of the pattern or a repetition
 pub(crate) const ENDPAT: u8 = 15;
+
+impl Flags {
+    pub fn parse_args(args: Vec<OsString>) -> Result<(Pattern, Vec<PathBuf>, Flags), CliError> {
+        if args.len() <= 1 {
+            return Err(UsageError::NoArguments.into());
+        }
+        if args.len() == 2 && args[1] == "?" {
+            return Err(CliError::Help);
+        }
+
+        let mut pattern = None;
+        let mut files = Vec::with_capacity(args.len());
+        let mut flags = Flags {
+            cflag: false,
+            fflag: 0,
+            nflag: false,
+            vflag: false,
+            debug: 0,
+        };
+
+        for arg in args.into_iter().skip(1) {
+            if let Some((b'-', flag)) = arg.as_encoded_bytes().split_first() {
+                for &c in flag {
+                    match c {
+                        b'?' => print!("{}", USAGE_DOC),
+                        b'c' | b'C' => flags.cflag = true,
+                        b'd' | b'D' => flags.debug += 1,
+                        b'f' | b'F' => flags.fflag += 1,
+                        b'n' | b'N' => flags.nflag = true,
+                        b'v' | b'V' => flags.vflag = true,
+                        _ => return Err(UsageError::UnknownFlag { flag: c }.into()),
+                    }
+                }
+            } else if pattern.is_none() {
+                pattern = Some(Pattern::compile(
+                    arg.into_encoded_bytes(),
+                    Pattern::DEFAULT_LIMIT,
+                    flags.debug != 0,
+                )?);
+            } else {
+                files.push(PathBuf::from(arg));
+            }
+        }
+
+        let Some(pattern) = pattern else {
+            return Err(UsageError::NoPattern.into());
+        };
+        Ok((pattern, files, flags))
+    }
+}
 
 impl Pattern {
     /// The original value for `PMAX` in grep.c, which limits the size of the

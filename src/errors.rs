@@ -3,6 +3,20 @@ use std::{
     io::{self, Write},
 };
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum CliError {
+    Help,
+    Usage(UsageError),
+    Pattern(PatternError),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum UsageError {
+    NoArguments,
+    UnknownFlag { flag: u8 },
+    NoPattern,
+}
+
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct PatternError {
     pub kind: PatternErrorKind,
@@ -35,19 +49,39 @@ pub enum GrepError {
     Io(io::Error),
 }
 
+impl UsageError {
+    /// Writes the error matching grep.c.
+    pub fn dump<W: Write>(&self, mut stderr: W) -> io::Result<()> {
+        write!(stderr, "?GREP-E-{}\n", self.message())?;
+        write!(
+            stderr,
+            "Usage: grep [-cfnv] pattern [file ...].  grep ? for help\n"
+        )
+    }
+
+    /// Returns the error message matching grep.c.
+    pub fn message(&self) -> &'static str {
+        match self {
+            UsageError::NoArguments => "No arguments",
+            UsageError::UnknownFlag { .. } => "Unknown flag",
+            UsageError::NoPattern => "No pattern",
+        }
+    }
+}
+
 impl PatternError {
     /// Writes the error matching grep.c.
-    pub fn dump<W: Write>(&self, mut w: W) -> io::Result<()> {
+    pub fn dump<W: Write>(&self, mut stderr: W) -> io::Result<()> {
         if self.kind == PatternErrorKind::ComplexPattern {
-            w.write_all(self.kind.message().as_bytes())?;
-            w.write_all(b"\n")
+            stderr.write_all(self.kind.message().as_bytes())?;
+            stderr.write_all(b"\n")
         } else {
             // BUG: No space between “pattern is” and quoted string.
-            write!(w, "-GREP-E-{}, pattern is\"", self.kind.message())?;
-            w.write_all(&self.source)?;
-            write!(w, "\"\n-GREP-E-Stopped at byte {}, '", self.offset)?;
-            w.write_all(&[self.source[self.offset - 1]])?;
-            write!(w, "'\n?GREP-E-Bad pattern\n")
+            write!(stderr, "-GREP-E-{}, pattern is\"", self.kind.message())?;
+            stderr.write_all(&self.source)?;
+            write!(stderr, "\"\n-GREP-E-Stopped at byte {}, '", self.offset)?;
+            stderr.write_all(&[self.source[self.offset - 1]])?;
+            stderr.write_all(b"'\n?GREP-E-Bad pattern\n")
         }
     }
 }
@@ -68,6 +102,18 @@ impl PatternErrorKind {
     }
 }
 
+impl From<UsageError> for CliError {
+    fn from(err: UsageError) -> Self {
+        CliError::Usage(err)
+    }
+}
+
+impl From<PatternError> for CliError {
+    fn from(err: PatternError) -> Self {
+        CliError::Pattern(err)
+    }
+}
+
 impl From<MatchError> for GrepError {
     fn from(err: MatchError) -> Self {
         GrepError::Match(err)
@@ -80,9 +126,33 @@ impl From<io::Error> for GrepError {
     }
 }
 
+impl std::error::Error for CliError {}
+impl std::error::Error for UsageError {}
 impl std::error::Error for PatternError {}
 impl std::error::Error for MatchError {}
 impl std::error::Error for GrepError {}
+
+impl Display for CliError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            CliError::Help => write!(f, "help requested"),
+            CliError::Usage(err) => Display::fmt(err, f),
+            CliError::Pattern(err) => Display::fmt(err, f),
+        }
+    }
+}
+
+impl Display for UsageError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match *self {
+            UsageError::NoArguments => write!(f, "no arguments"),
+            UsageError::UnknownFlag { flag } => {
+                write!(f, "unknown flag {:?}", DebugByteString(&[b'-', flag]))
+            }
+            UsageError::NoPattern => write!(f, "no pattern"),
+        }
+    }
+}
 
 impl Display for PatternError {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
