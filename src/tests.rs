@@ -20,6 +20,15 @@ macro_rules! test(($pattern:literal = $compiled:expr, $($text:literal => $res:ex
 });
 
 #[test]
+fn nclass_overruns_line() {
+    // `NCLASS` can match NUL.
+    test!(
+        b".[^x]." = [ANY, NCLASS, 2, b'x', ANY, ENDPAT, 0],
+        b"x" => Err(MatchError::LineOverrun),
+    );
+}
+
+#[test]
 fn empty_class_oversteps() {
     // Matching `[]` interprets the byte following it as a char in the class.
     // Even if the text is at that char, the class never matches (the length
@@ -93,13 +102,11 @@ fn empty_nclass_oversteps() {
         b"[^][]" = [NCLASS, 1, CLASS, 1, ENDPAT, 0],
         b"abc\n" => Ok(false),
         b"a\x0f" => Err(MatchError::BadOpcode { op: 0 }),
-        // b"" => Err(MatchError::LineOverrun),
     );
     test!(
         b"[^][^]" = [NCLASS, 1, NCLASS, 1, ENDPAT, 0],
         b"abc\n" => Ok(false),
         b"a\x0f" => Err(MatchError::BadOpcode { op: 0 }),
-        // b"" => Err(MatchError::LineOverrun),
     );
 
     // Skips the `STAR`, `PLUS`, or `MINUS` opcode and executes its sub-pattern.
@@ -107,19 +114,39 @@ fn empty_nclass_oversteps() {
         b"[^]x*" = [NCLASS, 1, STAR, CHAR, b'x', ENDPAT, ENDPAT, 0],
         b"abc\n" => Ok(false),
         b"ax" => Ok(true),
-        // b"" => Err(MatchError::LineOverrun),
     );
     test!(
         b"[^]x+" = [NCLASS, 1, PLUS, CHAR, b'x', ENDPAT, ENDPAT, 0],
         b"abc\n" => Ok(false),
         b"ax" => Ok(true),
-        // b"" => Err(MatchError::LineOverrun),
     );
     test!(
         b"[^]x-" = [NCLASS, 1, MINUS, CHAR, b'x', ENDPAT, ENDPAT, 0],
         b"abc\n" => Ok(false),
         b"ax" => Ok(true),
-        // b"" => Err(MatchError::LineOverrun),
+    );
+
+    // For these to overrun, the line must not be empty, or `match` will never
+    // enter the loop.
+    test!(
+        b".[^][]" = [ANY, NCLASS, 1, CLASS, 1, ENDPAT, 0],
+        b"x" => Err(MatchError::LineOverrun),
+    );
+    test!(
+        b".[^][^]" = [ANY, NCLASS, 1, NCLASS, 1, ENDPAT, 0],
+        b"x" => Err(MatchError::LineOverrun),
+    );
+    test!(
+        b".[^]x*" = [ANY, NCLASS, 1, STAR, CHAR, b'x', ENDPAT, ENDPAT, 0],
+        b"x" => Err(MatchError::LineOverrun),
+    );
+    test!(
+        b".[^]x+" = [ANY, NCLASS, 1, PLUS, CHAR, b'x', ENDPAT, ENDPAT, 0],
+        b"x" => Err(MatchError::LineOverrun),
+    );
+    test!(
+        b".[^]x-" = [ANY, NCLASS, 1, MINUS, CHAR, b'x', ENDPAT, ENDPAT, 0],
+        b"x" => Err(MatchError::LineOverrun),
     );
 }
 
