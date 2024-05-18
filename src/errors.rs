@@ -29,6 +29,12 @@ pub enum MatchError {
     LineOverrun,
 }
 
+#[derive(Debug)]
+pub enum GrepError {
+    Match(MatchError),
+    Io(io::Error),
+}
+
 impl PatternError {
     /// Writes the error matching grep.c.
     pub fn dump<W: Write>(&self, mut w: W) -> io::Result<()> {
@@ -62,12 +68,38 @@ impl PatternErrorKind {
     }
 }
 
-impl std::error::Error for PatternError {}
+impl From<MatchError> for GrepError {
+    fn from(err: MatchError) -> Self {
+        GrepError::Match(err)
+    }
+}
 
-/// Displays the error according to Rust conventions.
+impl From<io::Error> for GrepError {
+    fn from(err: io::Error) -> Self {
+        GrepError::Io(err)
+    }
+}
+
+impl std::error::Error for PatternError {}
+impl std::error::Error for MatchError {}
+impl std::error::Error for GrepError {}
+
 impl Display for PatternError {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        let message = match self.kind {
+        write!(
+            f,
+            "bad pattern: {} at byte {} ({:?}) in {:?}",
+            self.kind,
+            self.offset,
+            DebugByteChar(self.source[self.offset - 1]),
+            DebugByteString(&self.source),
+        )
+    }
+}
+
+impl Display for PatternErrorKind {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let message = match self {
             PatternErrorKind::IllegalOccurrence => "illegal occurrence",
             PatternErrorKind::UnknownColonType => "unknown ':' type",
             PatternErrorKind::NoColonType => "missing ':' type",
@@ -78,13 +110,27 @@ impl Display for PatternError {
             PatternErrorKind::EmptyClass => "empty class",
             PatternErrorKind::ComplexPattern => "pattern too complex",
         };
-        write!(
-            f,
-            "bad pattern: {message} at byte {} ({:?}) in {:?}",
-            self.offset,
-            DebugByteChar(self.source[self.offset - 1]),
-            DebugByteString(&self.source),
-        )
+        f.write_str(message)
+    }
+}
+
+impl Display for MatchError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match *self {
+            MatchError::BadOpcode { op } => write!(f, "bad opcode {:?}", DebugByteChar(op)),
+            MatchError::PatternOverrun => write!(f, "overran pattern buffer"),
+            MatchError::LineOverrun => write!(f, "overran line buffer"),
+        }
+    }
+}
+
+impl Display for GrepError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.write_str("grep: ")?;
+        match self {
+            GrepError::Match(err) => Display::fmt(err, f),
+            GrepError::Io(err) => Display::fmt(err, f),
+        }
     }
 }
 

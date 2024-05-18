@@ -13,13 +13,13 @@ fn main() {
 
     if files.is_empty() {
         let stdin = BufReader::new(stdin().lock());
-        pattern.grep(stdin, None, flags);
+        pattern.grep(stdin, None, flags).unwrap();
     } else {
         flags.fflag ^= (files.len() > 0) as u32;
         for path in files {
             match File::open(&path) {
                 Ok(f) => {
-                    pattern.grep(BufReader::new(f), Some(&path), flags);
+                    pattern.grep(BufReader::new(f), Some(&path), flags).unwrap();
                 }
                 Err(_) => {
                     let mut stderr = stderr().lock();

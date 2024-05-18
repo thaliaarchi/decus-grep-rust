@@ -5,7 +5,7 @@ use std::{
 
 use crate::{
     buffer::{LineCursor, PatternCursor},
-    MatchError, PatternError, PatternErrorKind,
+    GrepError, MatchError, PatternError, PatternErrorKind,
 };
 
 pub const DOCUMENTATION: &str = "grep searches a file for a given pattern.  Execute by
@@ -161,44 +161,52 @@ impl Pattern {
         Ok(false)
     }
 
-    pub fn grep<R: Read + BufRead>(&self, mut file: R, mut path: Option<&Path>, flags: Flags) {
-        fn list_file(path: &Path) {
+    pub fn grep<R: Read + BufRead>(
+        &self,
+        mut file: R,
+        mut path: Option<&Path>,
+        flags: Flags,
+    ) -> Result<i32, GrepError> {
+        fn list_file(path: &Path) -> io::Result<()> {
             let mut stdout = stdout().lock();
-            stdout.write_all(b"File ").unwrap();
-            stdout
-                .write_all(path.as_os_str().as_encoded_bytes())
-                .unwrap();
-            stdout.write_all(b":\n").unwrap();
+            stdout.write_all(b"File ")?;
+            stdout.write_all(path.as_os_str().as_encoded_bytes())?;
+            stdout.write_all(b":\n")
         }
 
         // Unlike grep.c, the line buffer is not restricted to 512 bytes (`LMAX`).
         let mut buf = Vec::new();
-        let mut line = 0;
-        let mut count = 0;
-        while file.read_until(b'\n', &mut buf).unwrap() != 0 {
+        let mut line = 0i32;
+        let mut count = 0i32;
+        while file.read_until(b'\n', &mut buf)? != 0 {
             line += 1;
-            if self.matches(&buf, flags.debug > 1).unwrap() != flags.vflag {
+            if self.matches(&buf, flags.debug > 1)? != flags.vflag {
                 count += 1;
                 if !flags.cflag {
                     let mut stdout = stdout().lock();
                     if flags.fflag != 0 {
-                        path.take().inspect(|&path| list_file(path));
+                        if let Some(path) = path.take() {
+                            list_file(path)?;
+                        }
                     }
                     if flags.nflag {
-                        write!(stdout, "{line}\t").unwrap();
+                        write!(stdout, "{line}\t")?;
                     }
-                    stdout.write_all(&buf).unwrap();
-                    stdout.write_all(b"\n").unwrap();
+                    stdout.write_all(&buf)?;
+                    stdout.write_all(b"\n")?;
                 }
             }
             buf.clear();
         }
         if flags.cflag {
             if flags.fflag != 0 {
-                path.take().inspect(|&path| list_file(path));
+                if let Some(path) = path.take() {
+                    list_file(path)?;
+                }
             }
-            writeln!(stdout(), "{count}").unwrap();
+            writeln!(stdout(), "{count}")?;
         }
+        Ok(count)
     }
 
     pub fn as_bytes(&self) -> &[u8] {

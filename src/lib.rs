@@ -6,6 +6,6 @@ mod tests;
 
 pub use crate::{
     buffer::OverrunBuffer,
-    errors::{MatchError, PatternError, PatternErrorKind},
+    errors::{GrepError, MatchError, PatternError, PatternErrorKind},
     grep::{Flags, Pattern, DOCUMENTATION, PATDOC},
 };
