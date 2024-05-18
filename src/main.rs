@@ -70,7 +70,7 @@ fn parse_args() -> (Pattern, Vec<PathBuf>, Flags) {
             }
         } else if pattern.is_none() {
             match Pattern::compile(
-                arg.as_encoded_bytes(),
+                arg.into_encoded_bytes(),
                 Pattern::DEFAULT_LIMIT,
                 flags.debug != 0,
             ) {

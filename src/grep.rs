@@ -55,6 +55,7 @@ The concatenation of regular expressions is a regular expression."#;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Pattern {
+    source: Vec<u8>,
     pbuf: Vec<u8>,
 }
 
@@ -121,28 +122,38 @@ impl Pattern {
     /// Unlike grep.c, NUL is valid in `source`, because it does not use NUL
     /// termination. Callers that wish to handle that differently should produce
     /// their own error or truncate at NUL.
-    pub fn compile(source: &[u8], limit: usize, debug: bool) -> Result<Self, PatternError> {
+    pub fn compile<T: Into<Vec<u8>>>(
+        source: T,
+        limit: usize,
+        debug: bool,
+    ) -> Result<Self, PatternError> {
+        Pattern::compile_(source.into(), limit, debug)
+    }
+
+    fn compile_(source: Vec<u8>, limit: usize, debug: bool) -> Result<Self, PatternError> {
         if debug {
             let mut stdout = stdout().lock();
             stdout.write_all(b"Pattern = \"").unwrap();
-            stdout.write_all(source).unwrap();
+            stdout.write_all(&source).unwrap();
             stdout.write_all(b"\"\n").unwrap();
         }
-        let mut compiler = Compiler::new(source, limit);
-        if let Err(kind) = compiler.compile() {
-            return Err(PatternError {
+        let mut compiler = Compiler::new(&source, limit);
+        let res = compiler.compile();
+        let Compiler { pbuf, offset, .. } = compiler;
+        match res {
+            Ok(()) => {
+                let pattern = Pattern { source, pbuf };
+                if debug {
+                    pattern.debug(stdout().lock()).unwrap();
+                }
+                Ok(pattern)
+            }
+            Err(kind) => Err(PatternError {
                 kind,
-                source: source.into(),
-                offset: compiler.offset,
-            });
-        };
-        let pattern = Pattern {
-            pbuf: compiler.pbuf,
-        };
-        if debug {
-            pattern.debug(stdout().lock()).unwrap();
+                source,
+                offset,
+            }),
         }
-        Ok(pattern)
     }
 
     /// Matches the line against the pattern and returns whether it does.
@@ -207,6 +218,10 @@ impl Pattern {
             writeln!(stdout(), "{count}")?;
         }
         Ok(count)
+    }
+
+    pub fn source(&self) -> &[u8] {
+        &self.source
     }
 
     pub fn as_bytes(&self) -> &[u8] {

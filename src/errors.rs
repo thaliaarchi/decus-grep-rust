@@ -6,7 +6,7 @@ use std::{
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct PatternError {
     pub kind: PatternErrorKind,
-    pub source: Box<[u8]>,
+    pub source: Vec<u8>,
     pub offset: usize,
 }
 
