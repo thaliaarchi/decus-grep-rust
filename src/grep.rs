@@ -374,6 +374,9 @@ impl<'s> Compiler<'s> {
         while let Some(c) = self.bump() {
             // STAR, PLUS, and MINUS are special.
             if c == b'*' || c == b'+' || c == b'-' {
+                // BUG: This never detects STAR, PLUS, or MINUS, as those are
+                // encoded as a prefix, and it will erroneously detect CHAR
+                // nodes with any of these five values.
                 if matches!(
                     self.pbuf.last(),
                     None | Some(&(BOL | EOL | STAR | PLUS | MINUS))
